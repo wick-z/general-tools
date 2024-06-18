@@ -29,54 +29,63 @@ public class DownloadFilesFromGivenLinks {
 
     public static void main(String[] args) throws IOException, URISyntaxException {
         String userDir = System.getProperty("user.dir");
+        String parentDirectory = userDir.concat(File.separator).concat("images");
         // 当前工作目录，也就是项目目录下的images目录
-        Path images = Paths.get(userDir.concat(File.separator).concat("images"));
+        Path images = Paths.get(parentDirectory);
         deleteFiles(images.toFile());
 //        Files.deleteIfExists(images);
         Files.createDirectory(images);
 
 //        Stream<String> lines = Files.lines(Paths.get(userDir.concat(File.separator).concat("links.txt")));
-        Stream<String> lines = Files.lines(Paths.get(DownloadFilesFromGivenLinks.class.getClassLoader()
-                .getResource("links.txt").toURI()));
-        AtomicReference<OutputStream> os = new AtomicReference<>();
-        lines.forEach(url -> {
-            try (InputStream in = new URL(url).openStream()){
-                // 文件 如xxx.jpg
-                String file = url.substring(url.lastIndexOf("/") + 1);
-                if (file.split("\\.").length != 2) {
-                    return;
-                }
-                // 截取URL中存在的文件目录
-                LOG.info("{}下载中", url);
-                String fileDirectory = getDirectoriesWithSeparatorFromURL(url);
+        URL url = DownloadFilesFromGivenLinks.class.getClassLoader()
+                .getResource("links.txt");
+        if (Objects.isNull(url)) {
+            LOG.warn("links file not found");
+            return;
+        }
 
-                if (fileDirectory.contains("/")) {
-                    StringBuilder directories = new StringBuilder();
-                    String[] fileDirectories = fileDirectory.split("/");
-                    for (String directory : fileDirectories) {
-                        directories.append(directory);
-                        Path dir = Paths.get(images.toFile().getAbsolutePath().concat(File.separator).concat(directories.toString().replace("%20", " ")));
+        try (Stream<String> lines = Files.lines(Paths.get(url.toURI()))) {
+            AtomicReference<OutputStream> os = new AtomicReference<>();
+            lines.forEach(line -> {
+                try (InputStream in = new URL(line).openStream()){
+                    // 文件 如xxx.jpg
+                    String file = line.substring(line.lastIndexOf("/") + 1);
+                    if (file.split("\\.").length != 2) {
+                        return;
+                    }
+                    // 截取URL中存在的文件目录
+                    LOG.info("{}下载中", line);
+                    String fileDirectory = getDirectoriesWithSeparatorFromURL(line);
+
+                    if (fileDirectory.contains("/")) {
+                        StringBuilder directories = new StringBuilder();
+                        String[] fileDirectories = fileDirectory.split("/");
+                        for (String directory : fileDirectories) {
+                            directories.append(directory);
+                            Path dir = Paths.get(parentDirectory, directories.toString());
+                            if (!Files.exists(dir)) {
+                                Files.createDirectory(dir);
+                            }
+                            directories.append(File.separator);
+                        }
+                    } else {
+                        Path dir = Paths.get(parentDirectory, fileDirectory);
                         if (!Files.exists(dir)) {
                             Files.createDirectory(dir);
                         }
-                        directories.append(File.separator);
                     }
-                } else {
-                    Path dir = Paths.get(images.toFile().getAbsolutePath().concat(File.separator).concat(fileDirectory.replace("%20", " ")));
-                    if (!Files.exists(dir)) {
-                        Files.createDirectory(dir);
-                    }
+                    Path files = Files.createFile(Paths.get(parentDirectory, fileDirectory, file));
+                    os.set(Files.newOutputStream(files));
+                    IOUtils.copy(in, os.get());
+                    LOG.info("{}下载完成", line);
+                } catch (IOException e) {
+                    LOG.error("下载失败：{}", e.getMessage());
+                } finally {
+                    IOUtils.closeQuietly(os.get());
                 }
-                Path files = Files.createFile(Paths.get(images.toFile().getAbsolutePath().concat(File.separator).concat(fileDirectory.concat(File.separator).concat(file.replace("%20", " ")))));
-                os.set(Files.newOutputStream(files));
-                IOUtils.copy(in, os.get());
-                LOG.info("{}下载完成", url);
-            } catch (IOException e) {
-                LOG.error("下载失败：{}", e.getMessage());
-            } finally {
-                IOUtils.closeQuietly(os.get());
-            }
-        });
+            });
+        }
+
     }
 
     private static void deleteFiles(File dir) {
@@ -84,18 +93,19 @@ public class DownloadFilesFromGivenLinks {
             return;
         }
         File[] files = dir.listFiles();
-        if (files.length == 0) {
-            dir.delete();
-        } else {
-            for (File file : files) {
-                if (file.isFile()) {
-                    file.delete();
-                } else {
-                    deleteFiles(file);
+        if (Objects.nonNull(files)) {
+            if (files.length == 0) {
+                dir.delete();
+            } else {
+                for (File file : files) {
+                    if (file.isFile()) {
+                        file.delete();
+                    } else {
+                        deleteFiles(file);
+                    }
                 }
             }
         }
-
         dir.delete();
     }
 
@@ -120,7 +130,7 @@ public class DownloadFilesFromGivenLinks {
      * @return path
      */
     private static String getDirectoriesWithSeparatorFromURL(String url) {
-        String fileName = url.substring(url.lastIndexOf("/") + 1);
+        String fileName = url.substring(url.lastIndexOf("/") + 1).replace("%20", " ");
         String path = null;
         try {
 //            path = new URI(URLDecoder.decode(url.trim(), "UTF-8").trim()).getPath();
@@ -132,9 +142,8 @@ public class DownloadFilesFromGivenLinks {
             // ignore
             LOG.warn("URL decode error: {}", e.getMessage());
         }*/
-        if (Objects.nonNull(path) && path.contains(" ")) {
-            path = path.replace(" ", "%20");
-            return path.substring(1, path.lastIndexOf(fileName) - 1 );
+        if (Objects.nonNull(path)) {
+            return path.substring(1, path.lastIndexOf(fileName) - 1);
         }
         return "";
     }
